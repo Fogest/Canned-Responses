@@ -15,13 +15,15 @@
 
       <!-- Tabs -->
       <div class="tabs">
-        <button id="responsesTab" class="tab-button active">Responses</button>
-        <button id="settingsTab" class="tab-button">Settings</button>
+        <button class="tab-button active" data-target="responsesList">
+          Responses
+        </button>
+        <button class="tab-button" data-target="settingsPanel">Settings</button>
       </div>
 
       <!-- Responses List -->
       <div id="responsesList" class="tab-content active">
-        <div class="search-container">
+        <div id="searchContainer" class="search-container">
           <input
             type="text"
             id="searchInput"
@@ -38,40 +40,34 @@
         <div class="settings-group">
           <h3>Storage Settings</h3>
           <div class="setting-item">
-            <label class="switch-label">
-              <div class="switch-container">
-                <label class="switch">
-                  <input type="checkbox" id="useGoogleDrive" />
-                  <span class="slider"></span>
-                </label>
-                <span>Sync with Google Drive</span>
-              </div>
-              <p class="setting-description">
-                Keep your responses synced across devices using Google Drive.
-              </p>
-            </label>
+            <div class="switch-container">
+              <label class="switch">
+                <input type="checkbox" id="useGoogleDrive" />
+                <span class="slider"></span>
+              </label>
+              <span>Sync with Google Drive</span>
+            </div>
+            <p class="setting-description">
+              Keep your responses synced across devices using Google Drive.
+            </p>
           </div>
+
           <div id="syncSettings" class="setting-item hidden">
-            <label for="syncInterval">Sync Interval (minutes):</label>
+            <label>Sync Interval (minutes):</label>
             <div class="sync-controls">
-              <input
-                type="number"
-                id="syncInterval"
-                min="15"
-                step="15"
-                value="60"
-              />
-              <button id="forceSyncBtn" class="button secondary">
-                Sync Now
-              </button>
+              <input type="number" id="syncInterval" min="15" value="60" />
+              <button id="forceSyncBtn" class="button primary">Sync Now</button>
             </div>
             <div id="lastSyncTime" class="text-small"></div>
           </div>
         </div>
+
         <div class="settings-group">
           <h3>About</h3>
           <p>Open Canned Responses v1.0</p>
-          <p>A free, open-source extension for managing response templates.</p>
+          <p class="text-small">
+            A free, open-source extension for managing response templates.
+          </p>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 // src/popup/popup.ts
 
-import { StorageData, CannedResponse, DEFAULT_STORAGE } from "../types";
+import { StorageData, CannedResponse } from "../types";
 import { storageService } from "../services/storage";
 
 declare const tinymce: any;
@@ -15,6 +15,10 @@ class PopupManager {
   }
 
   private async initializePopup() {
+    // Set initial popup size
+    document.body.style.width = "400px";
+    document.body.style.height = "600px";
+
     await this.loadData();
     this.initializeTabs();
     this.initializeEventListeners();
@@ -23,24 +27,45 @@ class PopupManager {
     this.updateSyncStatus();
   }
 
-  private async loadData() {
+  private async loadData(): Promise<void> {
     const data = await storageService.getStorageData();
     this.responses = data.responses;
-    this.updateSettingsUI(data);
+    await this.updateSettingsUI(data);
   }
 
-  private initializeTabs() {
-    const tabs = document.querySelectorAll(".tab-button");
-    const contents = document.querySelectorAll(".tab-content");
-
-    tabs.forEach((tab) => {
-      tab.addEventListener("click", () => {
-        tabs.forEach((t) => t.classList.remove("active"));
-        contents.forEach((c) => c.classList.remove("active"));
-        tab.classList.add("active");
-        const targetId = tab.id.replace("Tab", "");
-        document.getElementById(targetId)?.classList.add("active");
-      });
+  private initializeEditor() {
+    tinymce.init({
+      selector: "#richTextEditor",
+      height: 300,
+      menubar: false,
+      plugins: [
+        "advlist",
+        "autolink",
+        "lists",
+        "link",
+        "charmap",
+        "preview",
+        "anchor",
+        "searchreplace",
+        "visualblocks",
+        "code",
+        "fullscreen",
+        "insertdatetime",
+        "media",
+        "table",
+        "code",
+        "help",
+        "wordcount",
+      ],
+      toolbar:
+        "undo redo | formatselect | bold italic backcolor | " +
+        "alignleft aligncenter alignright alignjustify | " +
+        "bullist numlist outdent indent | removeformat | help",
+      content_style:
+        'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px }',
+      setup: (editor: any) => {
+        this.editor = editor;
+      },
     });
   }
 
@@ -77,6 +102,25 @@ class PopupManager {
       this.closeEditor();
     });
 
+    // Settings controls
+    document
+      .getElementById("useGoogleDrive")
+      ?.addEventListener("change", async (e) => {
+        const useGDrive = (e.target as HTMLInputElement).checked;
+        try {
+          if (useGDrive) {
+            await storageService.enableGoogleDrive();
+          } else {
+            await storageService.disableGoogleDrive();
+          }
+          await this.loadData();
+        } catch (error) {
+          console.error("Failed to update Google Drive settings:", error);
+          (e.target as HTMLInputElement).checked = !useGDrive;
+          alert("Failed to update Google Drive settings. Please try again.");
+        }
+      });
+
     // Force sync button
     document
       .getElementById("forceSyncBtn")
@@ -103,50 +147,103 @@ class PopupManager {
           button.textContent = "Sync Now";
         }
       });
+
+    // Sync interval input
+    document
+      .getElementById("syncInterval")
+      ?.addEventListener("change", async (e) => {
+        const newInterval = parseInt((e.target as HTMLInputElement).value);
+        if (newInterval < 15) {
+          (e.target as HTMLInputElement).value = "15";
+          return;
+        }
+
+        const data = await storageService.getStorageData();
+        await storageService.saveStorageData({
+          ...data,
+          config: {
+            ...data.config,
+            syncInterval: newInterval,
+          },
+        });
+      });
   }
 
-  private initializeEditor() {
-    tinymce.init({
-      selector: "#richTextEditor",
-      height: 300,
-      menubar: false,
-      plugins: [
-        "advlist",
-        "autolink",
-        "lists",
-        "link",
-        "charmap",
-        "preview",
-        "anchor",
-        "searchreplace",
-        "visualblocks",
-        "code",
-        "fullscreen",
-        "insertdatetime",
-        "media",
-        "table",
-        "code",
-        "help",
-        "wordcount",
-      ],
-      toolbar:
-        "undo redo | formatselect | " +
-        "bold italic backcolor | alignleft aligncenter " +
-        "alignright alignjustify | bullist numlist outdent indent | " +
-        "removeformat | help",
-      content_style:
-        'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px }',
-      setup: (editor: any) => {
-        this.editor = editor;
-      },
-      // Add GPL license key
-      license_key: "gpl",
+  private initializeTabs() {
+    const tabs = document.querySelectorAll(".tab-button");
+    const contents = document.querySelectorAll(".tab-content");
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        tabs.forEach((t) => t.classList.remove("active"));
+        contents.forEach((c) => c.classList.remove("active"));
+
+        tab.classList.add("active");
+
+        const targetId = tab.getAttribute("data-target");
+        if (targetId) {
+          const content = document.getElementById(targetId);
+          if (content) {
+            content.classList.add("active");
+
+            if (targetId === "responsesList") {
+              this.renderResponses();
+            } else if (targetId === "settingsPanel") {
+              this.loadData();
+            }
+          }
+        }
+      });
     });
+  }
+
+  private async copyResponseToClipboard(response: CannedResponse) {
+    try {
+      if (response.isHtml) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([response.content], { type: "text/html" }),
+            "text/plain": new Blob([this.stripHtml(response.content)], {
+              type: "text/plain",
+            }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(response.content);
+      }
+
+      const responseElement = document.querySelector(
+        `[data-id="${response.id}"]`
+      );
+      if (responseElement) {
+        const feedback = document.createElement("div");
+        feedback.className = "copy-feedback";
+        feedback.textContent = "Copied!";
+        responseElement.appendChild(feedback);
+
+        setTimeout(() => feedback.remove(), 2000);
+      }
+    } catch (err) {
+      console.error("Failed to copy:", err);
+      alert("Failed to copy response to clipboard");
+    }
+  }
+
+  private stripHtml(html: string): string {
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    return div.textContent || div.innerText || "";
   }
 
   private renderResponses() {
     const container = document.getElementById("responsesContainer");
-    if (!container) return;
+    const searchContainer = document.getElementById("searchContainer");
+
+    if (!container || !searchContainer) return;
+
+    searchContainer.innerHTML = `
+      <input type="text" id="searchInput" placeholder="Search responses...">
+    `;
 
     if (this.responses.length === 0) {
       container.innerHTML = `
@@ -157,10 +254,24 @@ class PopupManager {
       return;
     }
 
-    container.innerHTML = this.responses
+    this.renderResponseList(container, this.responses);
+
+    // Reattach search listener
+    document.getElementById("searchInput")?.addEventListener("input", (e) => {
+      const searchTerm = (e.target as HTMLInputElement).value.toLowerCase();
+      this.filterResponses(searchTerm);
+    });
+  }
+
+  private renderResponseList(
+    container: HTMLElement,
+    responses: CannedResponse[]
+  ) {
+    container.innerHTML = responses
       .map(
         (response) => `
-        <div class="response-item" data-id="${response.id}">
+      <div class="response-item" data-id="${response.id}">
+        <div class="response-content">
           <div class="response-title">${response.title}</div>
           <div class="response-meta">
             ${
@@ -170,33 +281,46 @@ class PopupManager {
             }
             · ${response.isHtml ? "HTML" : "Text"}
           </div>
-          <div class="response-actions">
-            <button class="button small edit-response">Edit</button>
-            <button class="button small danger delete-response">Delete</button>
-          </div>
         </div>
-      `
+        <div class="response-actions">
+          <button class="button small copy-response">Copy</button>
+          <button class="button small edit-response">Edit</button>
+          <button class="button small danger delete-response">Delete</button>
+        </div>
+      </div>
+    `
       )
       .join("");
 
-    // Add event listeners for edit and delete buttons
-    container.querySelectorAll(".edit-response").forEach((button) => {
-      button.addEventListener("click", (e) => {
-        const id = (e.target as Element)
-          .closest(".response-item")
-          ?.getAttribute("data-id");
-        if (id) this.editResponse(id);
-        e.stopPropagation();
-      });
-    });
+    // Add event listeners
+    container.querySelectorAll(".response-item").forEach((item) => {
+      const id = item.getAttribute("data-id");
+      if (!id) return;
 
-    container.querySelectorAll(".delete-response").forEach((button) => {
-      button.addEventListener("click", (e) => {
-        const id = (e.target as Element)
-          .closest(".response-item")
-          ?.getAttribute("data-id");
-        if (id) this.deleteResponse(id);
+      const response = responses.find((r) => r.id === id);
+      if (!response) return;
+
+      // Click on item to copy
+      item.addEventListener("click", (e) => {
+        if (!(e.target as Element).closest(".response-actions")) {
+          this.copyResponseToClipboard(response);
+        }
+      });
+
+      // Action buttons
+      item.querySelector(".copy-response")?.addEventListener("click", (e) => {
         e.stopPropagation();
+        this.copyResponseToClipboard(response);
+      });
+
+      item.querySelector(".edit-response")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.editResponse(id);
+      });
+
+      item.querySelector(".delete-response")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.deleteResponse(id);
       });
     });
   }
@@ -209,64 +333,10 @@ class PopupManager {
           site.toLowerCase().includes(searchTerm)
         )
     );
-    this.renderFilteredResponses(filtered);
-  }
-
-  private renderFilteredResponses(filtered: CannedResponse[]) {
-    const container = document.getElementById("responsesContainer");
-    if (!container) return;
-
-    if (filtered.length === 0) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <p>No matching responses found.</p>
-        </div>
-      `;
-      return;
-    }
-
-    container.innerHTML = filtered
-      .map(
-        (response) => `
-        <div class="response-item" data-id="${response.id}">
-          <div class="response-title">${response.title}</div>
-          <div class="response-meta">
-            ${
-              response.websites.length
-                ? `Sites: ${response.websites.join(", ")}`
-                : "Global"
-            }
-            · ${response.isHtml ? "HTML" : "Text"}
-          </div>
-          <div class="response-actions">
-            <button class="button small edit-response">Edit</button>
-            <button class="button small danger delete-response">Delete</button>
-          </div>
-        </div>
-      `
-      )
-      .join("");
-
-    // Reattach event listeners
-    container.querySelectorAll(".edit-response").forEach((button) => {
-      button.addEventListener("click", (e) => {
-        const id = (e.target as Element)
-          .closest(".response-item")
-          ?.getAttribute("data-id");
-        if (id) this.editResponse(id);
-        e.stopPropagation();
-      });
-    });
-
-    container.querySelectorAll(".delete-response").forEach((button) => {
-      button.addEventListener("click", (e) => {
-        const id = (e.target as Element)
-          .closest(".response-item")
-          ?.getAttribute("data-id");
-        if (id) this.deleteResponse(id);
-        e.stopPropagation();
-      });
-    });
+    this.renderResponseList(
+      document.getElementById("responsesContainer")!,
+      filtered
+    );
   }
 
   private async updateSettingsUI(data: StorageData) {
@@ -281,41 +351,10 @@ class PopupManager {
 
     if (useGoogleDrive) {
       useGoogleDrive.checked = data.config.useGoogleDrive;
-      useGoogleDrive.addEventListener("change", async (e) => {
-        const checkbox = e.target as HTMLInputElement;
-        try {
-          if (checkbox.checked) {
-            await storageService.enableGoogleDrive();
-          } else {
-            await storageService.disableGoogleDrive();
-          }
-          await this.loadData();
-        } catch (error) {
-          console.error("Failed to update Google Drive settings:", error);
-          checkbox.checked = !checkbox.checked; // Revert the checkbox
-          alert("Failed to update Google Drive settings. Please try again.");
-        }
-      });
     }
 
     if (syncInterval) {
       syncInterval.value = data.config.syncInterval.toString();
-      syncInterval.addEventListener("change", async () => {
-        const newInterval = parseInt(syncInterval.value);
-        if (newInterval < 15) {
-          syncInterval.value = "15";
-          return;
-        }
-
-        const newData = await storageService.getStorageData();
-        await storageService.saveStorageData({
-          ...newData,
-          config: {
-            ...newData.config,
-            syncInterval: newInterval,
-          },
-        });
-      });
     }
 
     if (syncSettings) {
@@ -329,6 +368,19 @@ class PopupManager {
         data.config.lastSync
       ).toLocaleString()}`;
     }
+  }
+
+  private updateSyncStatus() {
+    const lastSyncTime = document.getElementById("lastSyncTime");
+    if (!lastSyncTime) return;
+
+    chrome.storage.local.get("config", (result) => {
+      if (result.config?.lastSync) {
+        lastSyncTime.textContent = `Last synced: ${new Date(
+          result.config.lastSync
+        ).toLocaleString()}`;
+      }
+    });
   }
 
   private openEditor(response?: CannedResponse) {
@@ -359,12 +411,15 @@ class PopupManager {
     }
 
     if (response) {
-      if (response.isHtml) {
+      if (response.isHtml && this.editor) {
         this.editor.setContent(response.content);
       } else {
-        (
-          document.getElementById("responseContent") as HTMLTextAreaElement
-        ).value = response.content;
+        const plainTextEditor = document.getElementById(
+          "responseContent"
+        ) as HTMLTextAreaElement;
+        if (plainTextEditor) {
+          plainTextEditor.value = response.content;
+        }
       }
     }
   }
@@ -373,9 +428,15 @@ class PopupManager {
     const modal = document.getElementById("editorModal");
     if (modal) modal.style.display = "none";
     this.currentResponse = null;
-    this.editor.setContent("");
-    (document.getElementById("responseContent") as HTMLTextAreaElement).value =
-      "";
+    if (this.editor) {
+      this.editor.setContent("");
+    }
+    const plainTextEditor = document.getElementById(
+      "responseContent"
+    ) as HTMLTextAreaElement;
+    if (plainTextEditor) {
+      plainTextEditor.value = "";
+    }
   }
 
   private toggleEditor(isHtml: boolean) {
@@ -421,10 +482,14 @@ class PopupManager {
       .map((input) => input.value.trim())
       .filter(Boolean);
 
-    const content = isHtml
-      ? this.editor.getContent()
-      : (document.getElementById("responseContent") as HTMLTextAreaElement)
-          .value;
+    let content = "";
+    if (isHtml && this.editor) {
+      content = this.editor.getContent();
+    } else {
+      content = (
+        document.getElementById("responseContent") as HTMLTextAreaElement
+      ).value;
+    }
 
     if (!title || !content) {
       alert("Please fill in all required fields");
@@ -456,6 +521,13 @@ class PopupManager {
     this.closeEditor();
   }
 
+  private async editResponse(id: string) {
+    const response = this.responses.find((r) => r.id === id);
+    if (response) {
+      this.openEditor(response);
+    }
+  }
+
   private async deleteResponse(id: string) {
     if (!confirm("Are you sure you want to delete this response?")) return;
 
@@ -469,26 +541,6 @@ class PopupManager {
 
     this.responses = responses;
     this.renderResponses();
-  }
-
-  private async editResponse(id: string) {
-    const response = this.responses.find((r) => r.id === id);
-    if (response) {
-      this.openEditor(response);
-    }
-  }
-
-  private updateSyncStatus() {
-    const lastSyncTime = document.getElementById("lastSyncTime");
-    if (!lastSyncTime) return;
-
-    chrome.storage.local.get("config", (result) => {
-      if (result.config?.lastSync) {
-        lastSyncTime.textContent = `Last synced: ${new Date(
-          result.config.lastSync
-        ).toLocaleString()}`;
-      }
-    });
   }
 }
 
